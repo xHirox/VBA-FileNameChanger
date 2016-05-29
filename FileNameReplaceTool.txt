@@ -1,0 +1,232 @@
+'-------------------
+'ファイル名置換ツール
+'機能追加や改修はご自由に...
+'
+'Copyright (c) 2016 Hiro.M
+'Released under the MIT license
+'http://opensource.org/licenses/mit-license.php
+'-------------------
+Option Explicit
+
+' セル番地（V=縦,H=横）
+Private Const FPATH_V = 4, FPATH_H = 5 ' ファイル格納パス
+Private Const SPATH_V = 5, SPATH_H = 5 ' ファイル保存先
+Private Const BEFORE_V = 7, BEFORE_H = 7 ' 置換前の文字
+Private Const AFTER_V = 7, AFTER_H = 10 ' 置換後の文字
+Private Const FINDNUM_V = 12, FINDNUM_H = 5 ' 存在ファイル数セル
+Private Const START_V = 15 ' ファイルステータス 縦開始位置
+Private Const B_PATH_H = 1, B_NAME_H = 3, B_EXT_H = 6, A_PATH_H = 8, A_NAME_H = 10, A_EXT_H = 13 ' ファイルステータス 横開始位置
+Private Const END_RESULT_V = 115 ' 動作結果最終行
+
+' 基本情報
+Private Const SHT_INFO = "info" ' 操作シート名
+
+' 判定用
+Private Const ERR = "input-error", NO_ERR = "no-error" ' 諸判定用
+
+' MAIN
+Sub FileNameReplace()
+    Dim infosht As Worksheet ' シート用
+    Dim FSO As Object ' FileSystemObject
+    Dim inFile As Variant ' 格納ファイル取得用
+    Dim b_path, b_name, b_ext, a_path, a_name, a_ext, newfilename, filepath, savepath As String ' 変更前・変更後情報用
+    Dim beforestr, afterstr As String ' 置換文字用
+    Dim flag_err As String ' 判定用
+    Dim count, strCount As Integer ' ファイル数カウント用
+    Dim cell_v, cell_h As Integer ' セル番地用
+    
+    Set infosht = ThisWorkbook.Worksheets(SHT_INFO) ' シートセット
+    
+    Call ClearResult(infosht) ' 前回の結果をクリア
+    
+    flag_err = InputCheck(infosht) ' 入力項目チェック
+    
+    If flag_err = ERR Then ' エラーの場合は終了
+        Exit Sub
+    End If
+    
+    flag_err = vbNullString ' エラーフラグ初期化
+    
+    filepath = infosht.Cells(FPATH_V, FPATH_H) ' 格納先取得
+    savepath = infosht.Cells(SPATH_V, SPATH_H) ' 変更後の格納先取得
+    
+    Call isDirectoryExist(filepath) ' ファイルパスの存在チェック
+    If Not (savepath = vbNullString) Then ' 保存先が入力されている場合
+        Call isDirectoryExist(savepath)
+    End If
+    
+    beforestr = infosht.Cells(BEFORE_V, BEFORE_H) ' 置換対象文字を取得
+    afterstr = infosht.Cells(AFTER_V, AFTER_H) ' 置換後の文字を取得
+    
+    ' カウント・書き込み用セル番地初期化
+    count = 1
+    cell_v = START_V
+    cell_h = B_PATH_H
+    
+    ' 変更前ファイル名・ファイル数取得
+    Set FSO = CreateObject("Scripting.FileSystemObject")
+    
+    For Each inFile In FSO.GetFolder(filepath).Files
+        infosht.Cells(cell_v, cell_h) = inFile.Path
+        infosht.Cells(cell_v, B_NAME_H) = FSO.GetBaseName(infosht.Cells(cell_v, cell_h))
+        infosht.Cells(cell_v, B_EXT_H) = "." & FSO.GetExtensionName(infosht.Cells(cell_v, cell_h))
+        
+        cell_v = cell_v + 1 ' ひとつ下へ
+        count = count + 1 ' カウント増加
+        
+    Next inFile
+    
+    Set FSO = Nothing ' オブジェクト破棄
+    
+    infosht.Cells(FINDNUM_V, FINDNUM_H) = count & " file(s) found." ' 発見ファイル数書き込み
+    
+    ' 書き込み用セル番地初期化
+    cell_v = START_V
+    cell_h = B_PATH_H
+    
+    ' ファイル名置換ループ
+    Do Until infosht.Cells(cell_v, cell_h) = vbNullString
+        
+        b_path = infosht.Cells(cell_v, cell_h) ' 変更前ファイルパス取得
+        b_name = infosht.Cells(cell_v, B_NAME_H) ' 変更前ファイル名取得
+        b_ext = infosht.Cells(cell_v, B_EXT_H) ' 変更前拡張子取得
+        
+        a_name = ReplaceStr(infosht, b_name, beforestr, afterstr)
+        
+        If Not (savepath = vbNullString) Then ' 保存先の指定あり
+            newfilename = MakeNewFileName(savepath, a_name, b_ext)
+        ElseIf savepath = vbNullString Then ' 保存先の指定なし
+            newfilename = MakeNewFileName(filepath, a_name, b_ext)
+        End If
+        
+        Name b_path As newfilename ' ファイル名変更
+        
+        infosht.Cells(cell_v, A_PATH_H) = newfilename
+        
+        cell_v = cell_v + 1
+        
+        DoEvents
+    Loop
+    
+    
+    ' 書き込み用セル番地初期化
+    count = 1
+    cell_v = START_V
+    cell_h = A_PATH_H
+    
+    ' 変更後ファイル名・ファイル数取得
+    Set FSO = CreateObject("Scripting.FileSystemObject")
+    
+    If savepath = vbNullString Then
+        savepath = filepath
+    End If
+    
+    For Each inFile In FSO.GetFolder(savepath).Files
+        infosht.Cells(cell_v, cell_h) = inFile.Path
+        infosht.Cells(cell_v, A_NAME_H) = FSO.GetBaseName(infosht.Cells(cell_v, cell_h))
+        infosht.Cells(cell_v, A_EXT_H) = "." & FSO.GetExtensionName(infosht.Cells(cell_v, cell_h))
+        
+        cell_v = cell_v + 1 ' ひとつ下へ
+        count = count + 1 ' カウント増加
+        
+    Next inFile
+    
+    Set FSO = Nothing ' オブジェクト破棄
+    
+    MsgBox "done.", vbInformation
+    
+
+End Sub
+
+
+' 変更ファイル名作成（引数：ファイルパス,ファイル名,拡張子）
+Private Function MakeNewFileName(ByVal filepath As String, ByVal filename As String, ByVal extension As String) As String
+    Dim newfilename As String ' ファイル名代入用
+    
+    ' 連結規則：ファイルパス・ファイル名・拡張子
+    newfilename = filepath & "\" & filename & extension
+    
+    MakeNewFileName = newfilename
+    
+End Function
+
+' 置換対象の文字列があるかチェック（引数：シート,検索対象文字列,置換対象文字,カウント用int 戻り値：置換後の文字列）
+Private Function ReplaceStr(ByVal infosht As Worksheet, ByVal searchstr As String, ByVal beforestr As String, ByVal afterstr As String) As String
+    Dim cnt As Integer ' Instr用
+    Dim returnstr As String ' 戻り値用
+    
+    cnt = InStr(searchstr, beforestr)
+    
+    ' 置換完了までループ
+    Do While cnt > 0
+        cnt = InStr(searchstr, beforestr)
+        
+        If cnt <> 0 Then ' 置換対象がファイル名にある場合
+            searchstr = Replace(searchstr, beforestr, afterstr)
+        End If
+        
+        returnstr = searchstr
+        
+        DoEvents
+    Loop
+    
+    ReplaceStr = returnstr
+    
+End Function
+
+' 入力項目チェック（引数：シート 戻り値：判定文字列）
+Private Function InputCheck(ByVal infosht As Worksheet) As String
+    Dim flag As String ' 判定用
+    
+    If infosht.Cells(FPATH_V, FPATH_H) = vbNullString Then ' ファイル格納先が未入力の場合
+        Call ErrMsg("ファイル格納先が入力されていません", "入力不備")
+        flag = ERR
+    ElseIf infosht.Cells(BEFORE_V, BEFORE_H) = vbNullString Then ' 置換対象の文字が未入力の場合
+        Call ErrMsg("置換対象となる文字が入力されていません", "入力不備")
+        flag = ERR
+    Else ' 不備なし
+        flag = NO_ERR
+    End If
+    
+    InputCheck = flag
+    
+End Function
+
+' ディレクトリの存在チェック（引数：ファイルパス）
+Private Function isDirectoryExist(ByVal filepath As String) As String
+    Dim directoryexist As String ' フォルダチェック用
+    Dim flag As String ' 判定用
+    
+    directoryexist = Dir(filepath, vbDirectory) ' ファイルパスチェック（存在しない場合はvbnullstring）
+    
+    If (directoryexist = vbNullString) Then
+        Call ErrMsg("指定したファイル格納先、または保存先が存在しません", "ファイルパス不備")
+        flag = ERR
+        
+    Else
+        flag = NO_ERR
+        
+    End If
+    
+    isDirectoryExist = flag
+    
+End Function
+
+' 動作結果クリア（引数：シート）
+Private Function ClearResult(ByVal infosht As Worksheet)
+    Dim cell_v As Integer ' セル番地用
+    
+    cell_v = START_V
+    
+    Do Until cell_v > END_RESULT_V
+        infosht.Rows(cell_v).ClearContents
+        cell_v = cell_v + 1
+        DoEvents
+    Loop
+    
+End Function
+
+' エラーメッセージ表示（引数：メッセージ本文,メッセージタイトル）
+Private Function ErrMsg(ByVal msgbody As String, ByVal msgtitle As String)
+    MsgBox msgbody, vbExclamation, msgtitle
+End Function
